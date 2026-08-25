@@ -1,5 +1,7 @@
 # vllm-multi-gpu-launcher
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 > **One vLLM server per GPU — CPU-pinned and thread-capped — to run a
 > high-concurrency model fleet without the load-average explosion.**
 
@@ -175,73 +177,7 @@ The launcher exits non-zero if any instance fails to become healthy within
 
 ## Further reading
 
-- [docs/tuning-guide.md](docs/tuning-guide.md) — the full `260 → 13` load
-  investigation, parameter tuning tables, NUMA / Docker / K8s appendices, and a
-  terminology glossary.
-
----
-
-## 中文说明
-
-### 简介
-
-`vllm-multi-gpu-launcher` 用于在**单机多卡**环境下，为每张 GPU 启动一个独立
-`vllm serve` 实例，并通过 **CPU 物理绑核 + 线程收敛**解决多实例叠加导致的系统
-负载暴涨（Load Average 从 **260 降到 ~13**），同时保证吞吐不降反升。
-
-`launch_vllm.sh` 的核心行为：
-
-1. 通过 `nvidia-smi` **自动探测 GPU 数量**，每卡起一个实例；
-2. 用 `taskset -c` 把每个实例**钉在独立的一段 CPU 核心上**，避免跨核抢跑/跨 NUMA 抖动；
-3. 限制 `OMP_NUM_THREADS` / `MKL_NUM_THREADS` 并关闭 `TOKENIZERS_PARALLELISM`——这才是负载暴涨的真正根源；
-4. 启动前**端口预检**、启动后**逐实例轮询 `/health`**，失败即非零退出；
-5. **持久化 PID**，配合 `stop_vllm.sh` 干净停机。
-
-### 为什么 CPU 会飙到 50+ / 260
-
-推理主干在 GPU 上，但 PyTorch/MKL 会按**整机核心数**为每个进程开线程池，且默认
-**自旋等待**（不干活也在空转）；Tokenizer 又会再开一套 Rayon 线程池；多个实例叠加
-后产生上千个互相争抢的线程，调度器看到所有核心满负荷，负载直接打满。解决三件套是：
-
-| 手段 | 贡献 | 作用 |
-|---|---|---|
-| `taskset -c` 物理绑核 | ★★★★★ | 隔离实例，消除跨核漂移与缓存失效 |
-| `TOKENIZERS_PARALLELISM=false` | ★★★★ | 关掉分词器隐式线程池 |
-| `OMP/MKL_NUM_THREADS=8` | ★★ | 给底层数学库线程设上限 |
-
-### 参数速查（中文简表）
-
-| 环境变量 | 作用 | 默认值 | 为什么加 / 解决什么问题 |
-|---|---|---|---|
-| `MODEL_PATH`（必填） | 模型路径 → `--model` | 无 | 必填项强制显式声明，抹除私有绝对路径 |
-| `VLLM_API_KEY`（必填） | `--api-key` | 无 | 杜绝无鉴权裸奔，未设置直接报错退出 |
-| `VLLM_HOST` | `--host` | `127.0.0.1` | 收紧安全默认；对外时显式改 `0.0.0.0` |
-| `VLLM_BASE_PORT` | `--port`（每卡 +i） | `38000` | 每卡独立端口，便于 LB 与健康检查 |
-| `VLLM_SERVED_MODEL_NAMES` | `--served-model-name` 别名 | 模型目录名 | 去掉 `gpt-4o/gpt-5` 伪装，默认即真实名 |
-| `VLLM_GPU_MEMORY_UTILIZATION` | `--gpu-memory-utilization` | `0.90` | 留显存余量防长上下文 OOM |
-| `VLLM_MAX_NUM_SEQS` | `--max-num-seqs` | `16` | 单卡并发序列上限，控调度与显存争用 |
-| `VLLM_MAX_MODEL_LEN` | `--max-model-len` | `40960` | 按实际上下文长度设，避免 auto 过度预留 |
-| `VLLM_MAX_NUM_BATCHED_TOKENS` | `--max-num-batched-tokens` | `4096` | 单步 token 预算，防激活值 OOM、控延迟抖动 |
-| `VLLM_QUANTIZATION` | `--quantization` | 空（自动） | 自动走 `gptq_marlin` 快内核；手动 `gptq` 会锁慢内核 |
-| `VLLM_OMP_NUM_THREADS` | `OMP_NUM_THREADS` | `8` | 限 OpenMP 线程，防整机过度订阅 |
-| `VLLM_MKL_NUM_THREADS` | `MKL_NUM_THREADS` | `8` | 限 MKL 线程，防突发 CPU 计算霸核 |
-| `VLLM_TOKENIZERS_PARALLELISM` | `TOKENIZERS_PARALLELISM` | `false` | 关分词器隐式线程池 |
-| `VLLM_ENABLE_PREFIX_CACHING` | `--enable-prefix-caching` | 1（开） | 复用相同前缀 KV，抹平重复 Prefill |
-| `VLLM_ENABLE_CHUNKED_PREFILL` | `--enable-chunked-prefill` | 1（开） | 长 prompt 切块，避免长 Prefill 卡顿 decode |
-| `VLLM_REASONING_PARSER` / `VLLM_TOOL_CALL_PARSER` / `VLLM_ENABLE_AUTO_TOOL_CHOICE` | Qwen3 专属 flag | 关 | 默认关闭以通用化，Qwen3 用户显式开启 |
-| `VLLM_LOG_DIR` / `VLLM_RUN_DIR` | 日志 / PID 目录 | `./vllm_logs` / `./vllm_run` | 每卡独立日志、PID 供停机脚本用 |
-| `VLLM_HEALTH_TIMEOUT` | 健康检查超时 | `180` | 首卡加载约 60s，留足缓冲 |
-
-### 快速开始
-
-```bash
-cp .env.example .env
-# 编辑 .env，填 MODEL_PATH 与 VLLM_API_KEY
-./launch_vllm.sh   # 启动全部实例
-./stop_vllm.sh     # 停止全部实例
-```
-
-`MODEL_PATH` 与 `VLLM_API_KEY` 为必填，脚本缺失其一即报错退出，绝不无鉴权启动。
-
-更多细节（260→13 完整排查、调优表、NUMA/Docker 附录、术语表）见
-[docs/tuning-guide.md](docs/tuning-guide.md)。
+- [docs/tuning-guide.md](docs/tuning-guide.md) — (English) the full `260 → 13`
+  load investigation, parameter tuning tables, NUMA / Docker / K8s appendices,
+  and a terminology glossary.
+- [docs/tuning-guide.zh-CN.md](docs/tuning-guide.zh-CN.md) — 中文版调优指南。
