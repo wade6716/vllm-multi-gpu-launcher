@@ -1,0 +1,17 @@
+# IDE
+.idea/
+
+# Python virtualenv
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Secrets — never commit the real .env
+.env
+
+# Runtime artifacts
+vllm_logs/
+vllm_run/
+*.log
+*.pid
