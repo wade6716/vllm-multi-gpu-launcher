@@ -1,5 +1,7 @@
 # Tuning guide: vLLM high CPU load, diagnosis & optimization
 
+[English](tuning-guide.md) · [简体中文](tuning-guide.zh-CN.md)
+
 This document is the deep background behind `launch_vllm.sh`. Read the
 [README](../README.md) for usage; this guide explains *why* the knobs exist and
 how to reason about them when your workload changes.
@@ -267,20 +269,3 @@ Loading format: gptq_marlin         # fast path
 | **Continuous batching** | vLLM's scheduling that slots new sequence into any finished slot each iteration. |
 | **TTFT / ITL** | Time-to-first-token / inter-token latency. |
 | **CFS quota** | The kernel's soft CPU-time limiter (`--cpus=N`); can throttle sudden bursts. |
-
----
-
-## 中文要点
-
-- 负载飙高（260/50+）本质是**线程空转与跨核争抢**，不是真计算；三件套缺一不可：
-  `taskset` 绑核（★★★★★）+ `TOKENIZERS_PARALLELISM=false`（★★★★）+ `OMP/MKL=8`
-  （★★）。
-- 核心数再多，`OMP/MKL` 也保持在 4–8，属于「负加速」区间，越大越慢。
-- `--max-num-batched-tokens` 在开启 chunked-prefill 后取 2048–4096 即可，无需等于
-  上下文长度；16384+ 有 OOM 与延迟抖动风险。
-- 显式 `--quantization gptq` 会锁死慢内核（吞吐 ~600→100），应留空自动走
-  `gptq_marlin`。
-- 单 CPU 机器无需 NUMA 调优；容器用 `--cpuset-cpus` 硬绑核而不要 `--cpus` 软限流，
-  并加 `--ipc=host`、`--ulimit memlock=-1:-1`。
-- RTX 3090（Ampere）不支持原生 FP8 KV；无 NVLink 的单机不建议做 PD 分离，坚持
-  「每卡一实例」并转向前缀路由/投机采样/FP8(受支持时) 提效。
