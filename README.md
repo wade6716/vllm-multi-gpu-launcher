@@ -1,8 +1,15 @@
 # vllm-multi-gpu-launcher
 
-Launch **one `vllm serve` instance per GPU** with **CPU core pinning** and
-**thread control**, so that a fleet of vLLM instances on a single machine stops
-blowing up the CPU load average.
+> **One vLLM server per GPU — CPU-pinned and thread-capped — to run a
+> high-concurrency model fleet without the load-average explosion.**
+
+**vllm-multi-gpu-launcher** is a zero-dependency Bash launcher for serving large
+language models with [vLLM](https://github.com/vllm-project/vllm) across
+multiple GPUs on a single machine. It starts one OpenAI-compatible
+`vllm serve` instance per GPU, pins each instance to its own slice of CPU cores,
+and caps the low-level math-library and tokenizer threads — collapsing the
+system load average from hundreds to a low double-digit number while keeping
+(and usually improving) throughput.
 
 > **TL;DR** — One machine, six GPUs, six `vllm serve` processes, and a system
 > load average of **260** that wouldn't go away no matter how many cores you
